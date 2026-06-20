@@ -19,11 +19,18 @@ def main():
     torch.manual_seed(42)
     np.random.seed(42)
     
-    # 检查数据文件
-    data_file = 'data/load_data.csv'
-    if not os.path.exists(data_file):
-        print(f"数据文件 {data_file} 不存在!")
-        print("请先运行: python data_generator.py")
+    # 检查数据文件（优先 PJM，回退到原始模拟数据）
+    pjm_file = 'data/pjm_load.csv'
+    orig_file = 'data/load_data.csv'
+    if os.path.exists(pjm_file):
+        data_file = pjm_file
+        print(f"📡 Using PJM dataset: {pjm_file}")
+    elif os.path.exists(orig_file):
+        data_file = orig_file
+        print(f"📡 Using original dataset: {orig_file}")
+    else:
+        print(f"数据文件不存在!")
+        print("请先运行: python download_pjm.py")
         return
     
     # 1. 数据预处理
