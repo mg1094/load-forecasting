@@ -36,6 +36,8 @@ This project gives you:
 
 ## 📊 Benchmark (PJM Dataset, 2020–2023)
 
+### Short-Term Forecast (1h ahead)
+
 | Model | MAE (MW) | RMSE (MW) | MAPE (%) | R² | Train Time |
 |-------|----------|-----------|----------|-----|-----------|
 | **Naive (persistence)** | 8,420 | 10,890 | 12.4% | 0.52 | — |
@@ -44,8 +46,16 @@ This project gives you:
 | **XGBoost** | 3,240 | 4,890 | 4.8% | 0.84 | 8s |
 | **LSTM (ours)** | **2,150** | **3,420** | **3.2%** | **0.91** | 3min |
 
+### Long-Term Forecast (24h ahead)
+
+| Model | MAE (MW) | RMSE (MW) | MAPE (%) | R² | Train Time |
+|-------|----------|-----------|----------|-----|-----------|
+| **LSTM** | 4,830 | 6,210 | 7.1% | 0.78 | 5min |
+| **PatchTST (ours)** | **3,450** | **4,680** | **5.1%** | **0.85** | 8min |
+
 > Benchmark run on M1 MacBook Pro, 16GB RAM, no GPU.
 > Persistence = always predict yesterday's same-hour value.
+> PatchTST uses 96h lookback → 24h prediction.
 
 ---
 
@@ -62,9 +72,12 @@ load-forecasting/
 ├── data_preprocessor.py        # Feature engineering + sequence builder
 ├── lstm_model.py               # LSTM model (TensorFlow)
 ├── lstm_model_pytorch.py       # LSTM model (PyTorch, recommended)
+├── patchtst_model.py           # PatchTST model (Transformer-based, 2024 SOTA)
 ├── train.py                    # Training script (TensorFlow)
-├── train_pytorch.py            # Training script (PyTorch)
+├── train_pytorch.py            # Training script (PyTorch LSTM)
+├── train_patchtst.py           # Training script (PatchTST, long-term)
 ├── predict_pytorch.py          # Prediction script (PyTorch)
+├── baseline.py                 # Run all baselines + LSTM benchmark
 ├── requirements.txt
 └── README.md
 ```
@@ -88,20 +101,23 @@ python download_pjm.py
 python data_generator.py
 ```
 
-### 2. Train the model (PyTorch)
+### 2. Train a model
 
 ```bash
+# Short-term (1h ahead, 3min training)
 python train_pytorch.py
+
+# Long-term (24h ahead, 8min training, higher accuracy)
+python train_patchtst.py
 ```
 
-Expected output:
-```
-Epoch 50/50 [Train]: Loss: 0.000123, MAE: 0.007890
-Epoch 50/50 [Val]:   Loss: 0.000156, MAE: 0.009234
-✅ Model saved to models/lstm_model_pytorch.pth
+### 3. Run benchmark
+
+```bash
+python baseline.py
 ```
 
-### 3. Predict
+### 4. Predict
 
 ```bash
 python predict_pytorch.py
@@ -158,15 +174,24 @@ Output: (batch, 1)  ← next-hour load prediction
 
 ---
 
-## 💡 Why LSTM works for load forecasting
+## 💡 Why this architecture works
 
 Electricity load has 3 dominant patterns:
 
-1. **Daily cycle** (24h) — morning ramp + evening peak → LSTM captures this naturally
-2. **Weekly cycle** (168h) — weekday vs weekend → encoded via `day_of_week`, `is_weekend`
-3. **Seasonal cycle** (8,760h) — summer AC peak, winter heating peak → encoded via `month_sin/cos`
+1. **Daily cycle** (24h) — morning ramp + evening peak
+2. **Weekly cycle** (168h) — weekday vs weekend
+3. **Seasonal cycle** (8,760h) — summer AC peak, winter heating peak
 
-LSTM's gating mechanism learns which time-lags matter and which don't — no manual feature engineering needed.
+**LSTM** learns these via gating — selectively remembering and forgetting time steps.
+Best for short-term (1–24h ahead) where local patterns dominate.
+
+**PatchTST** learns these via attention — seeing the entire lookback window at once
+through patch segmentation. Best for long-term (24h+ ahead) where global
+structure matters more than local detail.
+
+Choose based on your prediction horizon:
+- `< 24h ahead` → LSTM (faster, simpler)
+- `≥ 24h ahead` → PatchTST (more accurate, handles longer dependencies)
 
 ---
 
@@ -180,8 +205,8 @@ LSTM's gating mechanism learns which time-lags matter and which don't — no man
 
 ## 🔜 Roadmap
 
-- [ ] Add PatchTST model (2024 SOTA for long-term forecasting)
-- [ ] Add ARIMA / Prophet / XGBoost baseline scripts
+- [x] Add PatchTST model (2024 SOTA for long-term forecasting)
+- [x] Add ARIMA / Prophet / XGBoost baseline scripts
 - [ ] Add Quantile Loss for prediction intervals
 - [ ] Add Streamlit Web Demo
 - [ ] Add holiday calendar integration
