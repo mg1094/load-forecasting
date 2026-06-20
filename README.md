@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">⚡ Load Forecasting with LSTM</h1>
   <p align="center">
-    <strong>Production-grade electricity load forecasting — LSTM + Attention, dual-framework (PyTorch recommended)</strong>
+    <strong>Production-grade electricity load forecasting — LSTM + PatchTST, pure PyTorch</strong>
   </p>
   <p align="center">
     <img src="https://img.shields.io/badge/Python-3.8+-blue.svg" alt="Python">
@@ -27,7 +27,7 @@ Most load forecasting tutorials use toy datasets and overfit immediately.
 This project gives you:
 
 - ✅ **Realistic data** — 35,064 hours of PJM-style load (2020–2023)
-- ✅ **Dual framework** — PyTorch (recommended) + TensorFlow (legacy)
+- ✅ **Pure PyTorch** — clean, single-framework codebase
 - ✅ **Production-ready** — early stopping, LR scheduling, checkpointing, scaler persistence
 - ✅ **Multiple baselines** — ARIMA, Prophet, XGBoost vs LSTM comparison
 - ✅ **Full pipeline** — `generate → preprocess → train → evaluate → predict`
@@ -70,13 +70,11 @@ load-forecasting/
 ├── download_pjm.py             # PJM data generator
 ├── data_generator.py           # Original data generator
 ├── data_preprocessor.py        # Feature engineering + sequence builder
-├── lstm_model.py               # LSTM model (TensorFlow)
-├── lstm_model_pytorch.py       # LSTM model (PyTorch, recommended)
-├── patchtst_model.py           # PatchTST model (Transformer-based, 2024 SOTA)
-├── train.py                    # Training script (TensorFlow)
-├── train_pytorch.py            # Training script (PyTorch LSTM)
-├── train_patchtst.py           # Training script (PatchTST, long-term)
-├── predict_pytorch.py          # Prediction script (PyTorch)
+├── lstm_model_pytorch.py       # LSTM model (short-term, 1-24h)
+├── patchtst_model.py           # PatchTST model (long-term, 24h+, 2024 SOTA)
+├── train_pytorch.py            # Train LSTM
+├── train_patchtst.py           # Train PatchTST
+├── predict_pytorch.py          # Run prediction
 ├── baseline.py                 # Run all baselines + LSTM benchmark
 ├── requirements.txt
 └── README.md
@@ -129,15 +127,14 @@ Output: prediction chart + metrics saved to `models/`.
 
 ## 🔧 Features
 
-| Feature | PyTorch | TensorFlow |
-|---------|---------|------------|
-| Multi-variate input | ✅ | ✅ |
-| Early stopping | ✅ | ✅ |
-| LR scheduling (ReduceLROnPlateau) | ✅ | — |
-| Checkpointing | ✅ | — |
-| tqdm progress bars | ✅ | — |
-| Multi-step prediction | ✅ | ✅ |
-| Training history plots | ✅ | ✅ |
+- Multi-variate input (load + weather + time features)
+- Early stopping with patience-based termination
+- LR scheduling (ReduceLROnPlateau)
+- Model checkpointing (best val loss)
+- tqdm progress bars during training
+- Multi-step prediction (1h to 24h)
+- Training history plots (loss + MAE curves)
+- Dual-model architecture: LSTM for short-term, PatchTST for long-term
 
 ---
 
