@@ -2,7 +2,7 @@
 """
 Fetch REAL PJM East (PJME) hourly load + Philadelphia weather.
 
-Replaces the old synthetic "download_pjm.py" with actual data:
+Replaces the old synthetic data generator with actual data:
   - Load: PJME hourly MW, 2002–2018, from a public GitHub mirror of the
     Kaggle "Hourly Energy Consumption" dataset (CC0). PJM's official API
     requires a registered key, so we go through the mirror + Git LFS API.

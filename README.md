@@ -96,13 +96,9 @@ Chronological split — test set = last 20% (≈14 months). M1 MacBook Pro, CPU 
 ```
 load-forecasting/
 ├── data/
-│   ├── pjm_real.csv            # Real PJME load + real weather (2014–2018)  ← 推荐
-│   ├── pjm_load.csv            # Legacy synthetic data (2020–2023)
-│   └── load_data.csv           # Original simple simulation
+│   └── pjm_real.csv            # Real PJME load + real weather (2014–2018)  ← 唯一数据源
 ├── models/                     # Saved models + scalers + charts
 ├── fetch_real_pjm.py           # Download real PJME load + open-meteo weather
-├── download_pjm.py             # Legacy synthetic data generator
-├── data_generator.py           # Original data generator
 ├── data_preprocessor.py        # Feature engineering + sequence builder
 ├── lstm_model_pytorch.py       # LSTM model (short-term, 1-24h)
 ├── patchtst_model.py           # PatchTST model (long-term, RevIN + instance norm)
@@ -120,8 +116,7 @@ load-forecasting/
 | 文件 | 来源 | 说明 |
 |---|---|---|
 | `pjm_real.csv` | PJME 小时负荷（Kaggle "Hourly Energy Consumption" 的公开镜像）+ open-meteo 费城历史天气 | 35,061 小时，2014-08 → 2018-08，负荷 19,255–56,609 MW |
-| `pjm_load.csv` | 合成 | 正弦 + 噪声生成，**天气与负荷无真实因果**，仅供离线演示 |
-| `load_data.csv` | 合成 | 最早期的最简模拟数据 |
+| `pjm_load.csv` | 合成，**已弃用** | 正弦 + 噪声生成，**天气与负荷无真实因果**。生成脚本 `download_pjm.py` 已删除，现在只是本地遗留文件，无法再重建 |
 
 > ⚠️ 合成数据的天气特征是独立随机生成的，模型学不到真实的负荷-天气耦合。
 > 项目里所有对外可引用的指标都应基于 `pjm_real.csv`。
@@ -141,10 +136,9 @@ load-forecasting/
 # Real PJME load (Kaggle mirror) + real Philadelphia weather (open-meteo, no key)
 python fetch_real_pjm.py            # → data/pjm_real.csv
 python fetch_real_pjm.py --years 6  # custom span
-
-# OR: legacy synthetic data (no network needed)
-python download_pjm.py              # → data/pjm_load.csv
 ```
+
+数据文件不进仓库（`data/` 被 gitignore），这一条命令是唯一的数据入口。
 
 ### 2. Train a model
 

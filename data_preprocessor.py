@@ -215,4 +215,4 @@ if __name__ == "__main__":
         # 保存标准化器
         preprocessor.save_scalers()
     else:
-        print("请先运行 data_generator.py 生成数据")
+        print("未找到数据文件，请先运行: python fetch_real_pjm.py")
