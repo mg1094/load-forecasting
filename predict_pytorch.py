@@ -25,9 +25,12 @@ def predict_future_load(hours_ahead=24):
     print("1. 📊 加载数据和预处理器...")
     preprocessor = DataPreprocessor(sequence_length=24, prediction_steps=1)
     
-    # 加载原始数据
-    df = preprocessor.load_data('data/load_data.csv')
-    print(f"✅ 原始数据: {df.shape}")
+    # 加载原始数据（优先真实 PJM 数据）
+    for _cand in ['data/pjm_real.csv', 'data/pjm_load.csv', 'data/load_data.csv']:
+        if os.path.exists(_cand):
+            break
+    df = preprocessor.load_data(_cand)
+    print(f"✅ 原始数据: {_cand} {df.shape}")
     
     # 加载预处理器
     preprocessor.load_scalers('models/scalers_pytorch.pkl')
@@ -78,14 +81,15 @@ def predict_future_load(hours_ahead=24):
         next_datetime = last_known_datetime + pd.Timedelta(hours=i + 1)
         
         # 创建一个包含下一时间步的单行DataFrame
+        # 注意：天气用最后一个已知值近似（真实部署应换成数值天气预报）
+        last_temp = df_with_features['temperature'].iloc[-1]
         next_step_df = pd.DataFrame([{
             'datetime': next_datetime,
             'hour': next_datetime.hour,
             'day_of_week': next_datetime.dayofweek,
             'month': next_datetime.month,
             'is_weekend': next_datetime.dayofweek >= 5,
-            # 使用最后一个已知值作为天气特征的近似值
-            'temperature': df_with_features['temperature'].iloc[-1],
+            'temperature': last_temp,
             'humidity': df_with_features['humidity'].iloc[-1],
             'wind_speed': df_with_features['wind_speed'].iloc[-1],
             'precipitation': df_with_features['precipitation'].iloc[-1],

@@ -21,14 +21,23 @@ class DataPreprocessor:
         self.feature_columns = []
         
     def load_data(self, filepath):
-        """加载数据"""
+        """加载数据（兼容 load_mw / load 两种列名）"""
         df = pd.read_csv(filepath)
         df['datetime'] = pd.to_datetime(df['datetime'])
+        # 真实 PJM 数据用 load_mw，原始模拟数据用 load —— 统一成 load
+        if 'load' not in df.columns and 'load_mw' in df.columns:
+            df = df.rename(columns={'load_mw': 'load'})
         df = df.sort_values('datetime').reset_index(drop=True)
         return df
-    
+
+    @staticmethod
+    def degree_day_base(temperature):
+        """按单位猜度日基准：华氏用 65°F，摄氏用 18°C。"""
+        median_temp = float(np.nanmedian(temperature))
+        return 65.0 if median_temp > 45 else 18.0
+
     def create_time_features(self, df):
-        """创建时间特征"""
+        """创建时间特征（含节假日与度日电）"""
         df = df.copy()
         df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
         df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
@@ -36,19 +45,44 @@ class DataPreprocessor:
         df['day_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
         df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
         df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+
+        # 度日电：刻画负荷-温度的 U 型关系（制冷/采暖需求）
+        if 'temperature' in df.columns and 'cdd' not in df.columns:
+            base = self.degree_day_base(df['temperature'])
+            df['cdd'] = np.maximum(df['temperature'] - base, 0.0)
+            df['hdd'] = np.maximum(base - df['temperature'], 0.0)
+
+        # 节假日：数据里没有就现算
+        if 'is_holiday' not in df.columns:
+            df['is_holiday'] = self._compute_holiday(df)
+
         return df
-    
+
+    @staticmethod
+    def _compute_holiday(df):
+        """用 holidays 库算美国联邦节假日；不可用时回退为 0。"""
+        try:
+            import holidays
+            if 'datetime' not in df.columns:
+                return 0
+            years = range(int(df['datetime'].dt.year.min()), int(df['datetime'].dt.year.max()) + 1)
+            us = holidays.US(years=list(years))
+            return df['datetime'].dt.date.map(lambda d: int(d in us)).astype(int)
+        except ImportError:
+            return 0
+
     def prepare_features(self, df):
         """准备特征"""
         df = self.create_time_features(df)
-        
-        # 选择特征列
+
+        # 选择特征列：天气 + 日历 + 节假日 + 度日电
         self.feature_columns = [
             'temperature', 'humidity', 'wind_speed', 'precipitation',
             'hour_sin', 'hour_cos', 'day_sin', 'day_cos',
-            'month_sin', 'month_cos', 'is_weekend'
+            'month_sin', 'month_cos', 'is_weekend', 'is_holiday',
+            'cdd', 'hdd',
         ]
-        
+
         return df
     
     def create_sequences(self, data, target_col='load'):

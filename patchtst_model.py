@@ -20,6 +20,49 @@ from tqdm import tqdm
 import math
 
 
+# ── Reversible Instance Normalization ────────────────────────────
+
+class RevIN(nn.Module):
+    """RevIN: Reversible Instance Normalization (Kim et al., ICLR 2022).
+
+    PatchTST 论文的关键组件之一：每个样本自己做归一化，预测后再反归一化。
+    电力负荷有明显日周期和水平漂移，不做 instance norm 时长程预测会掉点。
+    """
+
+    def __init__(self, num_features: int, eps: float = 1e-5, affine: bool = False):
+        super().__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.affine = affine
+        if affine:
+            self.weight = nn.Parameter(torch.ones(num_features))
+            self.bias = nn.Parameter(torch.zeros(num_features))
+        self._mean = None
+        self._stdev = None
+
+    def forward(self, x, mode: str):
+        if mode == "norm":
+            # x: (batch, seq_len, n_vars)
+            self._mean = x.mean(dim=1, keepdim=True).detach()
+            self._stdev = torch.sqrt(
+                x.var(dim=1, keepdim=True, unbiased=False) + self.eps
+            ).detach()
+            x = (x - self._mean) / self._stdev
+            if self.affine:
+                x = x * self.weight + self.bias
+            return x
+
+        if mode == "denorm":
+            # x: (batch, pred_len) —— 目标只有负荷这一路，用第 0 路的统计量还原
+            mean = self._mean[:, 0, 0].unsqueeze(-1)
+            stdev = self._stdev[:, 0, 0].unsqueeze(-1)
+            if self.affine:
+                x = (x - self.bias[0]) / self.weight[0]
+            return x * stdev + mean
+
+        raise ValueError(f"mode must be 'norm' or 'denorm', got {mode!r}")
+
+
 # ── Positional Encoding ─────────────────────────────────────────
 
 class PositionalEncoding(nn.Module):
@@ -141,8 +184,12 @@ class PatchTST(nn.Module):
         patch_len: int = 16,
         stride: int = 8,
         dropout: float = 0.1,
+        use_revin: bool = True,
     ):
         super().__init__()
+        self.use_revin = use_revin
+        self.revin = RevIN(n_vars) if use_revin else None
+
         self.encoder = PatchTSTEncoder(
             n_vars=n_vars,
             d_model=d_model,
@@ -166,18 +213,24 @@ class PatchTST(nn.Module):
         )
 
     def forward(self, x):
-        encoded = self.encoder(x)
-        return self.head(encoded)
+        if self.revin is not None:
+            x = self.revin(x, "norm")
+        out = self.head(self.encoder(x))
+        if self.revin is not None:
+            out = self.revin(out, "denorm")
+        return out
 
 
 # ── Trainer ──────────────────────────────────────────────────────
 
 class PatchTSTPredictor:
-    def __init__(self, seq_len=96, pred_len=24, n_vars=12):
+    def __init__(self, seq_len=96, pred_len=24, n_vars=12, use_revin=True):
         self.seq_len = seq_len
         self.pred_len = pred_len
         self.n_vars = n_vars
+        self.use_revin = use_revin
         self.model = None
+        self.config = {}
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.history = {"train_loss": [], "val_loss": [], "train_mae": [], "val_mae": []}
 
@@ -192,7 +245,12 @@ class PatchTSTPredictor:
         stride=8,
         dropout=0.1,
         learning_rate=0.001,
+        use_revin=None,
     ):
+        if use_revin is None:
+            use_revin = self.use_revin
+        self.use_revin = use_revin
+
         self.model = PatchTST(
             n_vars=self.n_vars,
             seq_len=self.seq_len,
@@ -203,7 +261,15 @@ class PatchTSTPredictor:
             patch_len=patch_len,
             stride=stride,
             dropout=dropout,
+            use_revin=use_revin,
         ).to(self.device)
+
+        # 存档用配置（train() 里保存 checkpoint 时要用）
+        self.config = {
+            "seq_len": self.seq_len, "pred_len": self.pred_len, "n_vars": self.n_vars,
+            "d_model": d_model, "n_heads": n_heads, "n_layers": n_layers,
+            "patch_len": patch_len, "stride": stride, "use_revin": use_revin,
+        }
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.criterion = nn.MSELoss()
@@ -287,11 +353,7 @@ class PatchTSTPredictor:
                 patience_counter = 0
                 torch.save({
                     "model_state_dict": self.model.state_dict(),
-                    "config": {
-                        "seq_len": self.seq_len, "pred_len": self.pred_len, "n_vars": self.n_vars,
-                        "d_model": d_model, "n_heads": n_heads, "n_layers": n_layers,
-                        "patch_len": patch_len, "stride": stride,
-                    },
+                    "config": self.config,
                     "best_val_loss": best_val_loss,
                 }, save_path)
                 print(f"  ✅ Saved (Val Loss: {best_val_loss:.6f})")
@@ -314,14 +376,16 @@ class PatchTSTPredictor:
     def evaluate(self, X_test, y_test, preprocessor=None):
         predictions = self.predict(X_test)
 
-        if preprocessor is not None and predictions.shape[1] == 1:
-            pred_flat = predictions.flatten()
-            y_flat = y_test.flatten()
-            pred_orig = preprocessor.inverse_transform_load(pred_flat)
-            y_orig = preprocessor.inverse_transform_load(y_flat)
-        else:
-            pred_orig = predictions.flatten()
-            y_orig = y_test.flatten()
+        pred_orig = predictions.flatten()
+        y_orig = y_test.flatten()
+
+        if preprocessor is not None:
+            # 目标和预测都还在 StandardScaler 的标准化空间（z-score）里，都要还原回 MW。
+            # 注意 RevIN 的 denorm 只撤销它自己加上的 instance norm：输入原本就是 scaler
+            # 标准化过的，所以 RevIN 的输出仍是 z-score，不是 MW —— 有 RevIN 时也必须再
+            # 过一次 scaler 反变换，否则会拿 z-score 去和 MW 比，指标全是废的。
+            y_orig = preprocessor.inverse_transform_load(y_orig)
+            pred_orig = preprocessor.inverse_transform_load(pred_orig)
 
         rmse = np.sqrt(mean_squared_error(y_orig, pred_orig))
         mae = mean_absolute_error(y_orig, pred_orig)
@@ -359,6 +423,7 @@ class PatchTSTPredictor:
         self.seq_len = cfg["seq_len"]
         self.pred_len = cfg["pred_len"]
         self.n_vars = cfg["n_vars"]
+        self.use_revin = cfg.get("use_revin", True)
 
         self.model = PatchTST(
             n_vars=cfg["n_vars"],
@@ -369,6 +434,7 @@ class PatchTSTPredictor:
             n_layers=cfg["n_layers"],
             patch_len=cfg["patch_len"],
             stride=cfg["stride"],
+            use_revin=self.use_revin,
         ).to(self.device)
         self.model.load_state_dict(checkpoint["model_state_dict"])
         print(f"Loaded PatchTST from {filepath}")

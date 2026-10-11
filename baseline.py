@@ -18,15 +18,17 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 warnings.filterwarnings("ignore")
 
 
-def load_data(filepath="data/pjm_load.csv"):
+def load_data(filepath="data/pjm_real.csv"):
     """Load PJM data and extract hourly load."""
     df = pd.read_csv(filepath)
     df["datetime"] = pd.to_datetime(df["datetime"])
+    if "load" not in df.columns and "load_mw" in df.columns:
+        df = df.rename(columns={"load_mw": "load"})
     df = df.set_index("datetime").sort_index()
 
     # Use the last 7 days as test set
-    train = df.iloc[:-168]["load_mw"]
-    test = df.iloc[-168:]["load_mw"]
+    train = df.iloc[:-168]["load"]
+    test = df.iloc[-168:]["load"]
 
     return train.values, test.values
 
@@ -116,14 +118,14 @@ def run_benchmark():
     print("=" * 60)
 
     # Load data
-    data_files = ["data/pjm_load.csv", "data/load_data.csv"]
+    data_files = ["data/pjm_real.csv", "data/pjm_load.csv", "data/load_data.csv"]
     for f in data_files:
         if os.path.exists(f):
             train, test = load_data(f)
             print(f"✅ Dataset: {f} ({len(train):,} train, {len(test)} test)")
             break
     else:
-        print("❌ No data found. Run: python download_pjm.py")
+        print("❌ No data found. Run: python fetch_real_pjm.py")
         return
 
     results = []
@@ -202,8 +204,11 @@ def run_benchmark():
 
             t0 = time.time()
             preprocessor = DataPreprocessor(sequence_length=24, prediction_steps=1)
-            df_data = pd.read_csv("data/pjm_load.csv" if os.path.exists("data/pjm_load.csv") else "data/load_data.csv")
-            df_data["datetime"] = pd.to_datetime(df_data["datetime"])
+            for _cand in ["data/pjm_real.csv", "data/pjm_load.csv", "data/load_data.csv"]:
+                if os.path.exists(_cand):
+                    break
+            df_data = pd.read_csv(_cand)
+            df_data = preprocessor.load_data(_cand)
             data_dict = preprocessor.prepare_data(df_data)
 
             predictor = LSTMLoadPredictor(

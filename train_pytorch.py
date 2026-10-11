@@ -4,6 +4,7 @@ PyTorch版本的LSTM负荷预测模型训练脚本
 """
 
 import os
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from data_preprocessor import DataPreprocessor
@@ -12,30 +13,46 @@ import json
 import torch
 
 def main():
-    print("🔥 PyTorch LSTM负荷预测模型训练")
+    parser = argparse.ArgumentParser(description="训练 LSTM 负荷预测模型")
+    parser.add_argument("--horizon", type=int, default=1,
+                        help="预测步数：1=短期(1h ahead，默认)，24=日前(1-24h，与 GBDT/PatchTST 同口径)")
+    parser.add_argument("--epochs", type=int, default=50)
+    args = parser.parse_args()
+    horizon = args.horizon
+
+    print(f"🔥 PyTorch LSTM负荷预测模型训练 (horizon={horizon}h)")
     print("=" * 50)
-    
+
+    # 中文字体（macOS 自带），否则图上的中文标签会显示成方框
+    plt.rcParams["font.sans-serif"] = [
+        "Arial Unicode MS", "PingFang HK", "Heiti TC", "Hiragino Sans GB", "DejaVu Sans"
+    ]
+    plt.rcParams["axes.unicode_minus"] = False
+
     # 设置随机种子
     torch.manual_seed(42)
     np.random.seed(42)
     
-    # 检查数据文件（优先 PJM，回退到原始模拟数据）
-    pjm_file = 'data/pjm_load.csv'
-    orig_file = 'data/load_data.csv'
-    if os.path.exists(pjm_file):
-        data_file = pjm_file
-        print(f"📡 Using PJM dataset: {pjm_file}")
-    elif os.path.exists(orig_file):
-        data_file = orig_file
-        print(f"📡 Using original dataset: {orig_file}")
-    else:
-        print(f"数据文件不存在!")
-        print("请先运行: python download_pjm.py")
+    # 检查数据文件（优先真实 PJM 数据，回退到合成数据）
+    candidates = [
+        ('data/pjm_real.csv', '真实 PJM 数据 (Kaggle 镜像 + open-meteo 天气)'),
+        ('data/pjm_load.csv', 'PJM 风格合成数据'),
+        ('data/load_data.csv', '原始模拟数据'),
+    ]
+    data_file = None
+    for path, label in candidates:
+        if os.path.exists(path):
+            data_file = path
+            print(f"📡 Using dataset: {path} —— {label}")
+            break
+    if data_file is None:
+        print("数据文件不存在!")
+        print("请先运行: python fetch_real_pjm.py")
         return
     
     # 1. 数据预处理
     print("\n1. 📊 数据预处理...")
-    preprocessor = DataPreprocessor(sequence_length=24, prediction_steps=1)
+    preprocessor = DataPreprocessor(sequence_length=24, prediction_steps=horizon)
     
     df = preprocessor.load_data(data_file)
     print(f"✅ 加载数据: {df.shape}")
@@ -50,14 +67,15 @@ def main():
     print(f"✅ 验证集: X={X_val.shape}, y={y_val.shape}")
     print(f"✅ 测试集: X={X_test.shape}, y={y_test.shape}")
     
-    preprocessor.save_scalers('models/scalers_pytorch.pkl')
-    
+    tag = "" if horizon == 1 else f"_{horizon}h"
+    preprocessor.save_scalers(f'models/scalers_pytorch{tag}.pkl')
+
     # 2. 构建模型
     print("\n2. 🤖 构建PyTorch LSTM模型...")
     predictor = LSTMLoadPredictor(
         sequence_length=24,
         n_features=X_train.shape[2],
-        prediction_steps=1
+        prediction_steps=horizon
     )
     
     # 构建模型
@@ -72,10 +90,10 @@ def main():
     history = predictor.train(
         X_train, y_train,
         X_val, y_val,
-        epochs=50,      # 减少轮数便于演示
+        epochs=args.epochs,      # 减少轮数便于演示
         batch_size=32,
         patience=10,
-        save_path='models/lstm_model_pytorch.pth'
+        save_path=f'models/lstm_model_pytorch{tag}.pth'
     )
     
     # 4. 评估模型
@@ -127,16 +145,16 @@ def main():
     plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('models/pytorch_prediction_results.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'models/pytorch_prediction_results{tag}.png', dpi=300, bbox_inches='tight')
     plt.show()
-    
+
     # 6. 保存结果
     print("\n6. 💾 保存结果...")
-    with open('models/pytorch_evaluation_metrics.json', 'w') as f:
-        json.dump(metrics, f, indent=2)
-    
+    with open(f'models/pytorch_evaluation_metrics{tag}.json', 'w') as f:
+        json.dump({**metrics, 'horizon': horizon}, f, indent=2)
+
     # 保存训练历史
-    with open('models/pytorch_training_history.json', 'w') as f:
+    with open(f'models/pytorch_training_history{tag}.json', 'w') as f:
         json.dump(history, f, indent=2)
     
     print("\n" + "="*60)
